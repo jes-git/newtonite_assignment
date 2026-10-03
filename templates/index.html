@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Newtonite Operations Board</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <aside class="sidebar">
+        <h1>Newtonite</h1>
+        <p>Operations workspace</p>
+
+        <label for="user-select">Current user</label>
+        <select id="user-select">
+          {% for user in users %}
+            <option value="{{ user.id }}" {% if user.id == current_user_id %}selected{% endif %}>{{ user.name }}</option>
+          {% endfor %}
+        </select>
+
+        <form id="create-form" class="stack">
+          <h2>New work item</h2>
+          <input id="title" name="title" type="text" placeholder="Title" required />
+          <textarea id="description" name="description" rows="3" placeholder="Description"></textarea>
+          <select id="team_id">
+            {% for team in teams %}
+              <option value="{{ team.id }}">{{ team.name }}</option>
+            {% endfor %}
+          </select>
+          <select id="status">
+            <option>New</option>
+            <option>In Progress</option>
+            <option>Blocked</option>
+            <option>Waiting</option>
+            <option>Closed</option>
+          </select>
+          <select id="priority">
+            <option>Low</option>
+            <option selected>Medium</option>
+            <option>High</option>
+            <option>Urgent</option>
+          </select>
+          <button type="submit">Create item</button>
+        </form>
+      </aside>
+
+      <main class="main-area">
+        <header class="topbar">
+          <div>
+            <h2>Operations queue</h2>
+          </div>
+          <span id="current-user-label">User: {{ current_user_id }}</span>
+        </header>
+
+        <section id="item-list" class="list-panel"></section>
+
+        <section class="detail-panel">
+          <h3>Selected item</h3>
+          <div id="item-detail" class="empty-state">Choose an item to view details.</div>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      const userSelect = document.getElementById('user-select');
+      const itemList = document.getElementById('item-list');
+      const itemDetail = document.getElementById('item-detail');
+      const currentUserLabel = document.getElementById('current-user-label');
+
+      async function loadItems() {
+        const userId = userSelect.value;
+        currentUserLabel.textContent = 'User: ' + userId;
+        document.cookie = 'user_id=' + userId + '; path=/';
+
+        const response = await fetch('/api/items?user_id=' + encodeURIComponent(userId));
+        const data = await response.json();
+        const items = data.items || [];
+
+        if (!items.length) {
+          itemList.innerHTML = '<div class="empty-state">No work items assigned to this user.</div>';
+          itemDetail.innerHTML = '<div class="empty-state">Choose an item to view details.</div>';
+          return;
+        }
+
+        itemList.innerHTML = items.map(item => `
+          <button class="list-item" data-item-id="${item.id}">
+            <strong>${item.title}</strong>
+            <span>${item.status} • ${item.priority}</span>
+            <small>${item.team_name} • ${item.assignee_name || 'Unassigned'}</small>
+          </button>
+        `).join('');
+
+        document.querySelectorAll('.list-item').forEach(btn => {
+          btn.addEventListener('click', () => viewItem(Number(btn.dataset.itemId)));
+        });
+      }
+
+      async function viewItem(itemId) {
+        const userId = userSelect.value;
+        const response = await fetch('/api/items/' + itemId + '?user_id=' + encodeURIComponent(userId));
+        const data = await response.json();
+        if (!data.item) {
+          itemDetail.innerHTML = '<div class="error-state">Unable to load item.</div>';
+          return;
+        }
+
+        const item = data.item;
+        const history = data.history || [];
+        itemDetail.innerHTML = `
+          <div class="detail-card">
+            <div class="detail-header">
+              <h4>${item.title}</h4>
+              <span class="status-badge">${item.status}</span>
+            </div>
+            <p>${item.description || 'No description provided.'}</p>
+            <div class="meta-grid">
+              <div><strong>Priority:</strong> ${item.priority}</div>
+              <div><strong>Owner:</strong> ${item.assignee_name || 'Unassigned'}</div>
+              <div><strong>Team:</strong> ${item.team_name}</div>
+              <div><strong>Version:</strong> ${item.version}</div>
+            </div>
+
+            <form id="update-form" class="stack">
+              <input type="hidden" id="update-id" value="${item.id}" />
+              <input type="hidden" id="update-version" value="${item.version}" />
+              <label>New status
+                <select id="update-status">
+                  <option ${item.status === 'New' ? 'selected' : ''}>New</option>
+                  <option ${item.status === 'In Progress' ? 'selected' : ''}>In Progress</option>
+                  <option ${item.status === 'Blocked' ? 'selected' : ''}>Blocked</option>
+                  <option ${item.status === 'Waiting' ? 'selected' : ''}>Waiting</option>
+                  <option ${item.status === 'Closed' ? 'selected' : ''}>Closed</option>
+                </select>
+              </label>
+              <label>New priority
+                <select id="update-priority">
+                  <option ${item.priority === 'Low' ? 'selected' : ''}>Low</option>
+                  <option ${item.priority === 'Medium' ? 'selected' : ''}>Medium</option>
+                  <option ${item.priority === 'High' ? 'selected' : ''}>High</option>
+                  <option ${item.priority === 'Urgent' ? 'selected' : ''}>Urgent</option>
+                </select>
+              </label>
+              <button type="submit">Save update</button>
+            </form>
+
+            <div class="history-box">
+              <h5>History</h5>
+              ${history.map(entry => `
+                <div class="history-item">
+                  <strong>${entry.action}</strong>
+                  <span>${entry.details || ''}</span>
+                  <small>${entry.created_at}</small>
+                </div>
+              `).join('') || '<p>No history recorded yet.</p>'}
+            </div>
+          </div>
+        `;
+
+        const form = document.getElementById('update-form');
+        form.addEventListener('submit', async (event) => {
+          event.preventDefault();
+          const body = {
+            status: document.getElementById('update-status').value,
+            priority: document.getElementById('update-priority').value,
+            version: Number(document.getElementById('update-version').value),
+          };
+
+          const response = await fetch('/api/items/' + item.id + '/update?user_id=' + encodeURIComponent(userId), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+
+          const result = await response.json();
+          if (!response.ok) {
+            alert(result.error || 'Unable to save update');
+            return;
+          }
+          await loadItems();
+          await viewItem(item.id);
+        });
+      }
+
+      document.getElementById('create-form').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const userId = userSelect.value;
+        const body = {
+          title: document.getElementById('title').value,
+          description: document.getElementById('description').value,
+          team_id: Number(document.getElementById('team_id').value),
+          status: document.getElementById('status').value,
+          priority: document.getElementById('priority').value,
+          assignee_id: Number(userId),
+        };
+
+        const response = await fetch('/api/items?user_id=' + encodeURIComponent(userId), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+
+        const result = await response.json();
+        if (!response.ok) {
+          alert(result.error || 'Create failed');
+          return;
+        }
+
+        document.getElementById('title').value = '';
+        document.getElementById('description').value = '';
+        await loadItems();
+        await viewItem(result.item.id);
+      });
+
+      userSelect.addEventListener('change', loadItems);
+      loadItems();
+    </script>
+  </body>
+</html>
