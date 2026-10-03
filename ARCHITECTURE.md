@@ -1,10 +1,18 @@
 # Architecture Overview
 
-## High-level flow
+```mermaid
+flowchart LR
+    U[User] --> B[Browser UI]
+    B --> A[Flask API]
+    A --> D[(SQLite Database)]
+    A --> H[History + permission checks]
+    D --> W[Work items]
+    D --> T[Teams + memberships]
+    D --> I[Item history]
 
-User -> Browser UI -> Flask API -> SQLite Database
-                              |
-                              +--> Work item history and permissions
+    B -->|Create / update / read| A
+    A -->|Version check + auth| D
+```
 
 ## Main components
 
